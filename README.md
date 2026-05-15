@@ -33,9 +33,9 @@ cp .env.example .env
 |---|---|---|
 | `SECRET_KEY` | ✅ | Django secret key — generate a long random string |
 | `DEBUG` | ✅ | `True` for development, `False` for production |
-| `OPENAI_API_KEY` | ⚠️ | OpenAI key for GPT-4o-mini + embeddings |
-| `GROQ_API_KEY` | ⚠️ | Groq key (free alternative to OpenAI) |
-| `LLM_PROVIDER` | ✅ | `openai` or `groq` (default: `openai`) |
+| `OPENAI_API_KEY` |  | OpenAI key for GPT-4o-mini + embeddings |
+| `GROQ_API_KEY` | True | Groq key (free alternative to OpenAI) |
+| `LLM_PROVIDER` | ✅ | `openai` or `groq` (default: `groq`) |
 | `CHROMA_PERSIST_DIR` | ✅ | Path for ChromaDB persistence (default: `./chroma_db`) |
 | `CHUNK_SIZE` | ✅ | Words per chunk (default: `500`) |
 | `CHUNK_OVERLAP` | ✅ | Overlap between chunks (default: `50`) |
