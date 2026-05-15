@@ -7,14 +7,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt gunicorn
 
 COPY . .
 
 RUN mkdir -p /app/media/documents /app/chroma_db /app/staticfiles
 
+RUN chmod -R 777 /app/media /app/chroma_db /app/staticfiles
+
 RUN python manage.py collectstatic --noinput
 
-EXPOSE 8000
+# Hugging Face port
+EXPOSE 7860
 
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"]
+CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn --bind 0.0.0.0:7860 config.wsgi:application"]
