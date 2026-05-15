@@ -20,27 +20,6 @@ All data is fully isolated per user.
 
 ---
 
-## 🗂 Project Structure
-
-```
-rag_chatbot/
-├── apps/
-│   ├── auth_app/          # Register, login, JWT, /me
-│   ├── documents/         # Upload, list, delete + RAG service
-│   │   └── rag_service.py # Extraction, chunking, embedding, retrieval, LLM
-│   └── chat/              # Chat endpoint + history
-├── rag_chatbot/           # Django settings, URLs, WSGI
-├── templates/
-│   └── index.html         # Full SPA frontend (no build step)
-├── media/                 # Uploaded files (git-ignored)
-├── chroma_db/             # ChromaDB vector store (git-ignored)
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-└── .env.example
-```
-
----
 
 ## ⚙️ Environment Variables
 
@@ -76,8 +55,8 @@ cp .env.example .env
 
 ```bash
 # 1. Clone
-git clone https://github.com/your-username/docmind.git
-cd docmind
+git clone https://github.com/AhmedNazeh2/RAG_App_Using_Django.git
+cd RAG_App_Using_Django
 
 # 2. Create virtual environment
 python -m venv venv
@@ -106,8 +85,8 @@ Open **http://127.0.0.1:8000** in your browser — the UI will load automaticall
 
 ```bash
 # 1. Clone & configure
-git clone https://github.com/your-username/docmind.git
-cd docmind
+git clone https://github.com/AhmedNazeh2/RAG_App_Using_Django.git
+cd RAG_App_Using_Django
 cp .env.example .env
 # Edit .env
 
@@ -116,22 +95,6 @@ docker-compose up --build
 
 # App available at http://localhost:8000
 ```
-
----
-
-## 🧪 Running Tests
-
-```bash
-# All tests
-python manage.py test apps
-
-# Specific app
-python manage.py test apps.auth_app
-python manage.py test apps.documents
-python manage.py test apps.chat
-```
-
----
 
 ## 📡 API Reference
 
