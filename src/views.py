@@ -28,9 +28,8 @@ class MeView(APIView):
     def get(self, request):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
-    
 
-  
+
 import logging
 from django.shortcuts import get_object_or_404
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -52,7 +51,6 @@ class DocumentUploadView(APIView):
 
         uploaded_file = serializer.validated_data['file']
 
-        # Persist the file
         doc = Document.objects.create(
             owner=request.user,
             filename=uploaded_file.name,
@@ -60,7 +58,6 @@ class DocumentUploadView(APIView):
             file_size=uploaded_file.size,
         )
 
-        # Embed asynchronously-ish (sync for simplicity; use Celery for production)
         try:
             chunk_count = embed_document(
                 file_path=doc.file.path,
@@ -99,10 +96,8 @@ class DocumentDetailView(APIView):
     def delete(self, request, pk):
         doc = get_object_or_404(Document, pk=pk, owner=request.user)
 
-        # Remove vectors from ChromaDB
         delete_document_embeddings(document_id=doc.id, user_id=request.user.id)
 
-        # Remove the physical file
         try:
             doc.file.delete(save=False)
         except Exception as exc:
@@ -112,8 +107,8 @@ class DocumentDetailView(APIView):
         return Response(
             {'message': 'Document deleted successfully.'},
             status=status.HTTP_200_OK,
-        )        
-            
+        )
+
 
 from .rag_service import retrieve_relevant_chunks, generate_answer
 from .models import ChatMessage
@@ -132,12 +127,23 @@ class ChatView(APIView):
 
         question = serializer.validated_data['question']
 
+        recent_history = (
+            ChatMessage.objects
+            .filter(owner=request.user)
+            .order_by('created_at')  
+            .values('question', 'answer')
+        )
+        chat_history = list(recent_history)
+
         # Retrieve relevant document chunks for this user
         chunks = retrieve_relevant_chunks(query=question, user_id=request.user.id)
 
-        # Generate answer via LLM
         try:
-            answer = generate_answer(question=question, context_chunks=chunks)
+            answer = generate_answer(
+                question=question,
+                context_chunks=chunks,
+                chat_history=chat_history,  
+            )
         except Exception as exc:
             logger.error('LLM error for user %s: %s', request.user.id, exc)
             return Response(
@@ -170,7 +176,6 @@ class ChatHistoryView(APIView):
 
     def get(self, request):
         messages = ChatMessage.objects.filter(owner=request.user)[:20]
-        # Return in chronological order for the UI
         serializer = ChatMessageSerializer(reversed(list(messages)), many=True)
         return Response(serializer.data)
 
@@ -184,6 +189,4 @@ class ChatHistoryDetailView(APIView):
         return Response(
             {'message': 'Chat entry deleted successfully.'},
             status=status.HTTP_200_OK,
-        )    
-        
-      
+        )
