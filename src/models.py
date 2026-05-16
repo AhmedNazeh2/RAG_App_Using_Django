@@ -23,6 +23,7 @@ from django.db import models
 
 class ChatMessage(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_messages')
+    conversation_id = models.CharField(max_length=50, db_index=True)
     question = models.TextField()
     answer = models.TextField()
     sources = models.JSONField(default=list, blank=True)
