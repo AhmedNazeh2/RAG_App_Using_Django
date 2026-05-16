@@ -117,6 +117,8 @@ from .serializers import ChatQuestionSerializer, ChatMessageSerializer
 logger = logging.getLogger(__name__)
 
 
+import uuid
+
 class ChatView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -126,23 +128,23 @@ class ChatView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         question = serializer.validated_data['question']
+        
+        conversation_id = serializer.validated_data.get('conversation_id') or str(uuid.uuid4())
 
-        recent_history = (
+        chat_history = list(
             ChatMessage.objects
-            .filter(owner=request.user)
-            .order_by('created_at')  
+            .filter(owner=request.user, conversation_id=conversation_id)
+            .order_by('created_at')
             .values('question', 'answer')
         )
-        chat_history = list(recent_history)
 
-        # Retrieve relevant document chunks for this user
         chunks = retrieve_relevant_chunks(query=question, user_id=request.user.id)
 
         try:
             answer = generate_answer(
                 question=question,
                 context_chunks=chunks,
-                chat_history=chat_history,  
+                chat_history=chat_history,
             )
         except Exception as exc:
             logger.error('LLM error for user %s: %s', request.user.id, exc)
@@ -151,34 +153,32 @@ class ChatView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        # Format source references
-        sources = [
-            f'{fname} \u2014 chunk {cidx}'
-            for _, fname, cidx in chunks
-        ]
+        sources = [f'{fname} — chunk {cidx}' for _, fname, cidx in chunks]
 
-        # Persist the Q&A pair
         msg = ChatMessage.objects.create(
             owner=request.user,
+            conversation_id=conversation_id,
             question=question,
             answer=answer,
             sources=sources,
         )
 
-        return Response(
-            ChatMessageSerializer(msg).data,
-            status=status.HTTP_201_CREATED,
-        )
+        return Response(ChatMessageSerializer(msg).data, status=status.HTTP_201_CREATED)
 
 
 class ChatHistoryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        messages = ChatMessage.objects.filter(owner=request.user)[:20]
-        serializer = ChatMessageSerializer(reversed(list(messages)), many=True)
+        conversation_id = request.query_params.get('conversation_id')
+        messages = ChatMessage.objects.filter(owner=request.user)
+        
+        if conversation_id:
+            messages = messages.filter(conversation_id=conversation_id)
+        
+        messages = messages.order_by('created_at')[:20]
+        serializer = ChatMessageSerializer(messages, many=True)
         return Response(serializer.data)
-
 
 class ChatHistoryDetailView(APIView):
     permission_classes = [IsAuthenticated]
