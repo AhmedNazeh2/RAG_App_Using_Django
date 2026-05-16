@@ -1,192 +1,89 @@
 from django.contrib.auth.models import User
-from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-
-from .serializers import RegisterSerializer, UserSerializer
+from rest_framework import serializers
 
 
-class RegisterView(APIView):
-    permission_classes = [AllowAny]
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8)
 
-    def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(
-                {'message': 'Account created successfully.'},
-                status=status.HTTP_201_CREATED,
-            )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    class Meta:
+        model = User
+        fields = ('username', 'email', 'password')
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError('Username already taken.')
+        return value
+
+    def validate_email(self, value):
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered.')
+        return value
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data.get('email', ''),
+            password=validated_data['password'],
+        )
+        return user
 
 
-class MeView(APIView):
-    permission_classes = [IsAuthenticated]
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email')
+        
 
-    def get(self, request):
-        serializer = UserSerializer(request.user)
-        return Response(serializer.data)
+from rest_framework import serializers
+from django.conf import settings
 
-
-import logging
-from django.shortcuts import get_object_or_404
-from rest_framework.parsers import MultiPartParser, FormParser
 from .models import Document
-from .rag_service import embed_document, delete_document_embeddings
-from .serializers import DocumentUploadSerializer, DocumentSerializer
-
-logger = logging.getLogger(__name__)
 
 
-class DocumentUploadView(APIView):
-    permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+class DocumentUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
 
-    def post(self, request):
-        serializer = DocumentUploadSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        uploaded_file = serializer.validated_data['file']
-
-        doc = Document.objects.create(
-            owner=request.user,
-            filename=uploaded_file.name,
-            file=uploaded_file,
-            file_size=uploaded_file.size,
-        )
-
-        try:
-            chunk_count = embed_document(
-                file_path=doc.file.path,
-                document_id=doc.id,
-                user_id=request.user.id,
-                filename=doc.filename,
+    def validate_file(self, value):
+        allowed_extensions = ['.pdf', '.txt']
+        name = value.name.lower()
+        if not any(name.endswith(ext) for ext in allowed_extensions):
+            raise serializers.ValidationError(
+                'Only .txt and .pdf files are supported.'
             )
-            doc.chunk_count = chunk_count
-            doc.save(update_fields=['chunk_count'])
-        except Exception as exc:
-            logger.error('Embedding failed for document %s: %s', doc.id, exc)
-            doc.delete()
-            return Response(
-                {'error': f'Failed to process document: {str(exc)}'},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        if value.size > settings.MAX_UPLOAD_SIZE:
+            raise serializers.ValidationError(
+                f'File size exceeds the {settings.MAX_UPLOAD_SIZE // (1024*1024)} MB limit.'
             )
-
-        return Response(
-            DocumentSerializer(doc).data,
-            status=status.HTTP_201_CREATED,
-        )
+        return value
 
 
-class DocumentListView(APIView):
-    permission_classes = [IsAuthenticated]
+class DocumentSerializer(serializers.ModelSerializer):
+    file_size_display = serializers.SerializerMethodField()
 
-    def get(self, request):
-        documents = Document.objects.filter(owner=request.user)
-        serializer = DocumentSerializer(documents, many=True)
-        return Response(serializer.data)
+    class Meta:
+        model = Document
+        fields = ('id', 'filename', 'file_size', 'file_size_display', 'chunk_count', 'uploaded_at')
+        read_only_fields = fields
 
-
-class DocumentDetailView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def delete(self, request, pk):
-        doc = get_object_or_404(Document, pk=pk, owner=request.user)
-
-        delete_document_embeddings(document_id=doc.id, user_id=request.user.id)
-
-        try:
-            doc.file.delete(save=False)
-        except Exception as exc:
-            logger.warning('Could not delete file for doc %s: %s', doc.id, exc)
-
-        doc.delete()
-        return Response(
-            {'message': 'Document deleted successfully.'},
-            status=status.HTTP_200_OK,
-        )
-
-
-from .rag_service import retrieve_relevant_chunks, generate_answer
+    def get_file_size_display(self, obj):
+        size = obj.file_size
+        if size < 1024:
+            return f'{size} B'
+        if size < 1024 ** 2:
+            return f'{size / 1024:.1f} KB'
+        return f'{size / (1024 ** 2):.1f} MB'        
+            
+        
+from rest_framework import serializers
 from .models import ChatMessage
-from .serializers import ChatQuestionSerializer, ChatMessageSerializer
 
-logger = logging.getLogger(__name__)
-
-
-import uuid
-
-class ChatView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        serializer = ChatQuestionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        question = serializer.validated_data['question']
-        
-        conversation_id = serializer.validated_data.get('conversation_id') or str(uuid.uuid4())
-
-        chat_history = list(
-            ChatMessage.objects
-            .filter(owner=request.user, conversation_id=conversation_id)
-            .order_by('created_at')
-            .values('question', 'answer')
-        )
-
-        chunks = retrieve_relevant_chunks(query=question, user_id=request.user.id)
-
-        try:
-            answer = generate_answer(
-                question=question,
-                context_chunks=chunks,
-                chat_history=chat_history,
-            )
-        except Exception as exc:
-            logger.error('LLM error for user %s: %s', request.user.id, exc)
-            return Response(
-                {'error': f'Failed to generate answer: {str(exc)}'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        sources = [f'{fname} — chunk {cidx}' for _, fname, cidx in chunks]
-
-        msg = ChatMessage.objects.create(
-            owner=request.user,
-            conversation_id=conversation_id,
-            question=question,
-            answer=answer,
-            sources=sources,
-        )
-
-        return Response(ChatMessageSerializer(msg).data, status=status.HTTP_201_CREATED)
+class ChatQuestionSerializer(serializers.Serializer):
+    question = serializers.CharField(max_length=2000, allow_blank=False)
+    conversation_id = serializers.CharField(required=False, allow_blank=True)        
 
 
-class ChatHistoryView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        conversation_id = request.query_params.get('conversation_id')
-        messages = ChatMessage.objects.filter(owner=request.user)
-        
-        if conversation_id:
-            messages = messages.filter(conversation_id=conversation_id)
-        
-        messages = messages.order_by('created_at')[:20]
-        serializer = ChatMessageSerializer(messages, many=True)
-        return Response(serializer.data)
-
-class ChatHistoryDetailView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def delete(self, request, pk):
-        msg = get_object_or_404(ChatMessage, pk=pk, owner=request.user)
-        msg.delete()
-        return Response(
-            {'message': 'Chat entry deleted successfully.'},
-            status=status.HTTP_200_OK,
-        )
+class ChatMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatMessage
+        fields = ('id', 'conversation_id', 'question', 'answer', 'sources', 'created_at')
+        read_only_fields = fields
