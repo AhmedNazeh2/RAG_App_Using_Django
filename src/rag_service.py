@@ -95,7 +95,7 @@ def _get_chroma_collection(user_id: int):
 
 # Public API 
 
-def embed_document(file_path: str,document_id: int,user_id: int,filename: str) -> int:
+def embed_document(file_path: str, document_id: int, user_id: int, filename: str) -> int:
 
     text = extract_text_from_file(file_path)
     if not text.strip():
@@ -153,7 +153,7 @@ def delete_document_embeddings(document_id: int, user_id: int) -> None:
         logger.error('Error deleting embeddings for doc %s: %s', document_id, exc)
 
 
-def retrieve_relevant_chunks(query: str,user_id: int,top_k: int = 5) -> List[Tuple[str, str, str]]:
+def retrieve_relevant_chunks(query: str, user_id: int, top_k: int = 5) -> List[Tuple[str, str, str]]:
     try:
         import chromadb
         client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
@@ -188,7 +188,11 @@ def retrieve_relevant_chunks(query: str,user_id: int,top_k: int = 5) -> List[Tup
 
 # LLM call 
 
-def generate_answer(question: str, context_chunks: List[Tuple[str, str, str]]) -> str:
+def generate_answer(
+    question: str,
+    context_chunks: List[Tuple[str, str, str]],
+    chat_history: List[dict] | None = None,  
+) -> str:
     if not context_chunks:
         return (
             "I couldn't find any relevant information in your documents to answer "
@@ -216,10 +220,10 @@ def generate_answer(question: str, context_chunks: List[Tuple[str, str, str]]) -
     provider = getattr(settings, 'LLM_PROVIDER', 'openai')
 
     if provider == 'groq' and getattr(settings, 'GROQ_API_KEY', ''):
-        return _call_groq(system_prompt, user_prompt)
+        return _call_groq(system_prompt, user_prompt, chat_history)
 
     if getattr(settings, 'OPENAI_API_KEY', ''):
-        return _call_openai(system_prompt, user_prompt)
+        return _call_openai(system_prompt, user_prompt, chat_history)
 
     # No API key — return a helpful stub
     return (
@@ -228,33 +232,46 @@ def generate_answer(question: str, context_chunks: List[Tuple[str, str, str]]) -
     )
 
 
-def _call_openai(system_prompt: str, user_prompt: str) -> str:
+def _build_messages(
+    system_prompt: str,
+    user_prompt: str,
+    chat_history: List[dict] | None,
+) -> List[dict]:
+
+    messages = [{'role': 'system', 'content': system_prompt}]
+
+    if chat_history:
+        for msg in chat_history[-10:]:
+            messages.append({'role': 'user', 'content': msg['question']})
+            messages.append({'role': 'assistant', 'content': msg['answer']})
+
+    messages.append({'role': 'user', 'content': user_prompt})
+    return messages
+
+
+def _call_openai(system_prompt: str, user_prompt: str, chat_history: List[dict] | None = None) -> str:
     import openai
     client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+    messages = _build_messages(system_prompt, user_prompt, chat_history)
     response = client.chat.completions.create(
         model='gpt-4o-mini',
-        messages=[
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': user_prompt},
-        ],
+        messages=messages,
         temperature=0.2,
         max_tokens=1024,
     )
     return response.choices[0].message.content.strip()
 
 
-def _call_groq(system_prompt: str, user_prompt: str) -> str:
+def _call_groq(system_prompt: str, user_prompt: str, chat_history: List[dict] | None = None) -> str:
     import openai  # Groq uses an OpenAI-compatible API
     client = openai.OpenAI(
         api_key=settings.GROQ_API_KEY,
         base_url='https://api.groq.com/openai/v1',
     )
+    messages = _build_messages(system_prompt, user_prompt, chat_history)
     response = client.chat.completions.create(
         model='llama-3.3-70b-versatile',
-        messages=[
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': user_prompt},
-        ],
+        messages=messages,
         temperature=0.2,
         max_tokens=1024,
     )
