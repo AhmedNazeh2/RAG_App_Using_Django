@@ -79,13 +79,11 @@ from .models import ChatMessage
 
 class ChatQuestionSerializer(serializers.Serializer):
     question = serializers.CharField(max_length=2000, allow_blank=False)
+    conversation_id = serializers.CharField(required=False, allow_blank=True)        
 
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatMessage
-        fields = ('id', 'question', 'answer', 'sources', 'created_at')
-        read_only_fields = fields        
-        
-        
-
+        fields = ('id', 'conversation_id', 'question', 'answer', 'sources', 'created_at')
+        read_only_fields = fields
